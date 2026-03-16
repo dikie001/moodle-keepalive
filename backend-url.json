@@ -1,6 +1,6 @@
 {
   "backendUrl": {
-    "development": "http://localhost:8080",
-    "production": "https://api.yourdomain.com"
+    "development": "http://localhost:3000",
+    "production": "http://localhost:3000"
   }
 }

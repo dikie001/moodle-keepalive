@@ -1,6 +1,35 @@
 // background.js — MV3 Service Worker
-// Update BACKEND_URL to point to your deployed backend.
-const BACKEND_URL = "https://your-backend.com";
+// Resolve backend URL from remote repo config so it can be changed centrally.
+const BACKEND_CONFIG_URL =
+  "https://raw.githubusercontent.com/dikie001/moodle-keepalive/main/backend-url.json";
+const DEFAULT_BACKEND_URL = "https://api.yourdomain.com";
+const BACKEND_URL_TTL_MS = 5 * 60 * 1000;
+
+let cachedBackendUrl = DEFAULT_BACKEND_URL;
+let backendUrlLastFetchedAt = 0;
+
+async function getBackendUrl() {
+  const now = Date.now();
+  if (now - backendUrlLastFetchedAt < BACKEND_URL_TTL_MS) {
+    return cachedBackendUrl;
+  }
+
+  try {
+    const response = await fetch(BACKEND_CONFIG_URL, { cache: "no-store" });
+    if (response.ok) {
+      const data = await response.json();
+      const productionUrl = data?.backendUrl?.production;
+      if (typeof productionUrl === "string" && productionUrl.length > 0) {
+        cachedBackendUrl = productionUrl.replace(/\/$/, "");
+      }
+    }
+  } catch {
+    // Keep using the last known URL (or default) when config fetch fails.
+  }
+
+  backendUrlLastFetchedAt = now;
+  return cachedBackendUrl;
+}
 
 // Fallback icon data URL (1×1 transparent PNG) used when icon.png is absent.
 const FALLBACK_ICON =
@@ -10,10 +39,12 @@ const FALLBACK_ICON =
 // Alarm setup — create/replace on install and browser startup
 // ---------------------------------------------------------------------------
 chrome.runtime.onInstalled.addListener(() => {
+  void getBackendUrl();
   chrome.alarms.create("checkNotifications", { periodInMinutes: 5 });
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  void getBackendUrl();
   chrome.alarms.create("checkNotifications", { periodInMinutes: 5 });
 });
 
@@ -38,8 +69,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   const since = lastNotificationCheck || new Date(0).toISOString();
 
   try {
+    const backendUrl = await getBackendUrl();
     const response = await fetch(
-      `${BACKEND_URL}/notifications?secret=${encodeURIComponent(secret)}&since=${encodeURIComponent(since)}`,
+      `${backendUrl}/notifications?secret=${encodeURIComponent(secret)}&since=${encodeURIComponent(since)}`,
     );
     if (!response.ok) return;
 
@@ -83,7 +115,8 @@ async function handleMessage(message) {
   const { type, payload } = message;
 
   if (type === "POST_SESSION") {
-    const response = await fetch(`${BACKEND_URL}/session`, {
+    const backendUrl = await getBackendUrl();
+    const response = await fetch(`${backendUrl}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -92,7 +125,8 @@ async function handleMessage(message) {
   }
 
   if (type === "DELETE_SESSION") {
-    const response = await fetch(`${BACKEND_URL}/session`, {
+    const backendUrl = await getBackendUrl();
+    const response = await fetch(`${backendUrl}/session`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
