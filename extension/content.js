@@ -3,11 +3,35 @@
   "use strict";
 
   const LOG_PREFIX = "[Moodle Keep-Alive][content]";
-  const log = (...args) => console.log(LOG_PREFIX, ...args);
-  const warn = (...args) => console.warn(LOG_PREFIX, ...args);
+  function forwardLog(level, args) {
+    try {
+      chrome.runtime.sendMessage({
+        type: "CONTENT_LOG",
+        payload: {
+          level,
+          args,
+          href: window.location.href,
+        },
+      });
+    } catch {
+      // Ignore logging transport failures.
+    }
+  }
+
+  const log = (...args) => {
+    console.log(LOG_PREFIX, ...args);
+    forwardLog("log", args);
+  };
+  const warn = (...args) => {
+    console.warn(LOG_PREFIX, ...args);
+    forwardLog("warn", args);
+  };
+
+  log("Content script injected", { href: window.location.href });
 
   // Step A — Detect Moodle. Exit immediately if this is not a Moodle page.
   if (typeof window.M === "undefined" || !window.M?.cfg?.wwwroot) {
+    log("window.M.cfg.wwwroot missing; skipping non-Moodle page");
     return;
   }
 

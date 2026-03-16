@@ -152,6 +152,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function handleMessage(message) {
   const { type, payload } = message;
 
+  if (type === "CONTENT_LOG") {
+    const logger = payload?.level === "warn" ? console.warn : console.log;
+    logger(
+      "[Moodle Keep-Alive][content->background]",
+      ...(payload?.args ?? []),
+      {
+        href: payload?.href,
+      },
+    );
+    return { ok: true };
+  }
+
   if (type === "POST_SESSION") {
     const backendUrl = await getBackendUrl();
     log("POST_SESSION -> backend", {
