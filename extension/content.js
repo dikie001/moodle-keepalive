@@ -2,15 +2,26 @@
 (function () {
   "use strict";
 
+  const LOG_PREFIX = "[Moodle Keep-Alive][content]";
+  const log = (...args) => console.log(LOG_PREFIX, ...args);
+  const warn = (...args) => console.warn(LOG_PREFIX, ...args);
+
   // Step A — Detect Moodle. Exit immediately if this is not a Moodle page.
-  if (typeof window.M === "undefined" || !window.M?.cfg?.wwwroot) return;
+  if (typeof window.M === "undefined" || !window.M?.cfg?.wwwroot) {
+    return;
+  }
 
   const domain = window.M.cfg.wwwroot;
+  log("Moodle page detected", {
+    href: window.location.href,
+    domain,
+  });
 
   // Step B — Extract the logged-in user id from the page HTML.
   const nonUniqueId =
     document.documentElement.outerHTML.match(/data-userid="(\d+)"/)?.[1] ??
     null;
+  log("User ID detection result", { nonUniqueId });
 
   if (nonUniqueId) {
     // -----------------------------------------------------------------------
@@ -18,9 +29,18 @@
     // -----------------------------------------------------------------------
     const uniqueIdentity = `${domain}/user/profile.php?id=${nonUniqueId}`;
     const cookieString = document.cookie;
+    log("Attempting session register", {
+      uniqueIdentity,
+      cookieLength: cookieString.length,
+    });
 
     chrome.storage.local.get(["secret"], ({ secret }) => {
-      if (!secret) return; // Access code not configured — do nothing silently
+      if (!secret) {
+        warn("Secret missing in storage; skipping POST_SESSION");
+        return;
+      }
+
+      log("Secret found; sending POST_SESSION", { uniqueIdentity });
 
       chrome.runtime.sendMessage(
         {
@@ -34,12 +54,27 @@
           },
         },
         (response) => {
-          if (chrome.runtime.lastError) return; // Service worker unavailable
+          if (chrome.runtime.lastError) {
+            warn(
+              "POST_SESSION messaging failed",
+              chrome.runtime.lastError.message,
+            );
+            return;
+          }
+
+          log("POST_SESSION response", response);
+
           if (response?.ok) {
             chrome.storage.local.get(["sessions"], ({ sessions = {} }) => {
               sessions[uniqueIdentity] = { cookieString, domain, nonUniqueId };
               chrome.storage.local.set({ sessions });
+              log("Session saved locally", {
+                uniqueIdentity,
+                totalSessions: Object.keys(sessions).length,
+              });
             });
+          } else {
+            warn("POST_SESSION returned non-ok response", response);
           }
         },
       );
@@ -52,6 +87,7 @@
     const isLoginPage =
       window.location.href.includes("/login/index.php") ||
       window.location.pathname === "/login/";
+    log("Logged-out branch", { isLoginPage, href: window.location.href });
 
     if (!isLoginPage) return;
 
@@ -61,10 +97,17 @@
         ([, s]) => s.domain === domain,
       );
 
-      if (!matchingEntry) return;
+      if (!matchingEntry) {
+        log("No saved session found for this domain", { domain });
+        return;
+      }
 
       const [sessionKey, session] = matchingEntry;
       const alreadyAttempted = sessionStorage.getItem("reloadAttempted");
+      log("Saved session found on login page", {
+        sessionKey,
+        alreadyAttempted: Boolean(alreadyAttempted),
+      });
 
       if (!alreadyAttempted) {
         // First attempt — inject stored cookies and reload
@@ -75,6 +118,10 @@
           document.cookie = pair;
         });
 
+        log("Cookie injection done; reloading page", {
+          cookiePairs: session.cookieString.split("; ").length,
+        });
+
         window.location.reload();
       } else {
         // Reload brought us back to the login page — session is expired
@@ -82,15 +129,26 @@
 
         chrome.storage.local.get(["secret"], ({ secret }) => {
           if (secret) {
+            log("Second login hit; deleting expired session from backend", {
+              sessionKey,
+            });
             chrome.runtime.sendMessage({
               type: "DELETE_SESSION",
               payload: { secret, uniqueIdentity: sessionKey },
+            });
+          } else {
+            warn("Secret missing while deleting expired session", {
+              sessionKey,
             });
           }
 
           // Remove from local storage
           delete sessions[sessionKey];
           chrome.storage.local.set({ sessions });
+          log("Expired session removed locally", {
+            sessionKey,
+            totalSessions: Object.keys(sessions).length,
+          });
 
           // Show a non-intrusive banner
           const banner = document.createElement("div");

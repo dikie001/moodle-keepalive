@@ -1,5 +1,9 @@
 // popup.js
 
+const LOG_PREFIX = "[Moodle Keep-Alive][popup]";
+const log = (...args) => console.log(LOG_PREFIX, ...args);
+const warn = (...args) => console.warn(LOG_PREFIX, ...args);
+
 // ---------------------------------------------------------------------------
 // Storage helpers
 // ---------------------------------------------------------------------------
@@ -59,6 +63,7 @@ function showImportSummary(text) {
 function renderSessions(sessions = {}) {
   const list = document.getElementById("sessionList");
   const entries = Object.entries(sessions);
+  log("Render sessions", { count: entries.length });
 
   if (entries.length === 0) {
     list.innerHTML = '<div class="empty-msg">No sessions tracked yet.</div>';
@@ -101,6 +106,7 @@ function renderSessions(sessions = {}) {
 // Remove a single session
 // ---------------------------------------------------------------------------
 async function removeSession(uniqueIdentity) {
+  log("Remove session clicked", { uniqueIdentity });
   const { secret, sessions = {} } = await getStorage(["secret", "sessions"]);
 
   if (secret) {
@@ -111,6 +117,9 @@ async function removeSession(uniqueIdentity) {
       });
     } catch {
       // Network error — remove locally regardless
+      warn("DELETE_SESSION request failed; removing locally", {
+        uniqueIdentity,
+      });
     }
   }
 
@@ -124,6 +133,7 @@ async function removeSession(uniqueIdentity) {
 // ---------------------------------------------------------------------------
 async function handleExport() {
   const { sessions = {} } = await getStorage(["sessions"]);
+  log("Export sessions", { count: Object.keys(sessions).length });
 
   const exportData = Object.entries(sessions).map(([uniqueIdentity, s]) => ({
     domain: s.domain,
@@ -147,6 +157,7 @@ async function handleExport() {
 // Import
 // ---------------------------------------------------------------------------
 async function handleImport(file) {
+  log("Import started", { filename: file?.name, size: file?.size });
   const summaryEl = document.getElementById("importSummary");
   summaryEl.style.display = "none";
   summaryEl.textContent = "";
@@ -197,6 +208,10 @@ async function handleImport(file) {
     "secret",
     "sessions",
   ]);
+  log("Import storage loaded", {
+    hasSecret: Boolean(secret),
+    existingSessions: Object.keys(currentSessions).length,
+  });
 
   const successList = [];
   const expiredList = [];
@@ -220,6 +235,7 @@ async function handleImport(file) {
     }
 
     if (!valid) {
+      warn("Import skipped invalid session", { domain, nonUniqueId });
       expiredList.push({ hostname, nonUniqueId });
       continue;
     }
@@ -247,8 +263,10 @@ async function handleImport(file) {
       }
 
       if (synced) {
+        log("Import sync success", { domain, nonUniqueId });
         successList.push({ hostname, nonUniqueId });
       } else {
+        warn("Import sync failed", { domain, nonUniqueId });
         serverFailList.push({ hostname, nonUniqueId });
       }
     } else {
@@ -258,6 +276,11 @@ async function handleImport(file) {
   }
 
   await setStorage({ sessions: currentSessions });
+  log("Import finished", {
+    imported: successList.length,
+    skipped: expiredList.length,
+    syncFailed: serverFailList.length,
+  });
   renderSessions(currentSessions);
 
   // --- Build summary ---
@@ -294,6 +317,10 @@ async function handleImport(file) {
 // ---------------------------------------------------------------------------
 async function init() {
   const { secret, sessions = {} } = await getStorage(["secret", "sessions"]);
+  log("Popup init", {
+    hasSecret: Boolean(secret),
+    sessions: Object.keys(sessions).length,
+  });
 
   if (secret) {
     document.getElementById("secretInput").value = secret;
@@ -306,6 +333,7 @@ async function init() {
     .addEventListener("click", async () => {
       const value = document.getElementById("secretInput").value.trim();
       await setStorage({ secret: value });
+      log("Secret saved", { hasSecret: Boolean(value), length: value.length });
       showSecretStatus(value ? "Saved!" : "Cleared.");
     });
 
