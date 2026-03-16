@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Moodle Keep-Alive</title>
+        <style>
+            *,
+            *::before,
+            *::after {
+                box-sizing: border-box;
+                margin: 0;
+                padding: 0;
+            }
+
+            body {
+                width: 380px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+                font-size: 13px;
+                color: #333;
+                background: #fff;
+            }
+
+            .header {
+                background: #0055a4;
+                color: #fff;
+                padding: 12px 16px;
+                font-size: 15px;
+                font-weight: 600;
+                letter-spacing: 0.2px;
+            }
+
+            .section {
+                padding: 12px 16px;
+                border-bottom: 1px solid #eee;
+            }
+
+            .section:last-child {
+                border-bottom: none;
+            }
+
+            .section-title {
+                font-size: 10px;
+                text-transform: uppercase;
+                letter-spacing: 0.6px;
+                color: #999;
+                margin-bottom: 8px;
+                font-weight: 600;
+            }
+
+            .input-row {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+            }
+
+            input[type="password"] {
+                flex: 1;
+                padding: 6px 10px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                font-size: 13px;
+                outline: none;
+            }
+
+            input[type="password"]:focus {
+                border-color: #0055a4;
+            }
+
+            .btn {
+                padding: 6px 12px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+                font-weight: 500;
+                white-space: nowrap;
+                background: #0055a4;
+                color: #fff;
+                transition: background 0.15s;
+            }
+
+            .btn:hover {
+                background: #003d7a;
+            }
+
+            .btn:active {
+                background: #002d5c;
+            }
+
+            .btn-secondary {
+                background: #f0f0f0;
+                color: #444;
+            }
+
+            .btn-secondary:hover {
+                background: #e0e0e0;
+            }
+
+            .btn-danger {
+                background: #dc3545;
+                padding: 4px 8px;
+                font-size: 12px;
+            }
+
+            .btn-danger:hover {
+                background: #b02a37;
+            }
+
+            .status-msg {
+                font-size: 12px;
+                color: #28a745;
+                flex-shrink: 0;
+            }
+
+            .status-msg.error {
+                color: #dc3545;
+            }
+
+            /* Session list */
+            .session-list {
+                padding-top: 2px;
+            }
+
+            .session-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 7px 0;
+                border-bottom: 1px solid #f5f5f5;
+            }
+
+            .session-item:last-child {
+                border-bottom: none;
+            }
+
+            .session-info {
+                flex: 1;
+                min-width: 0;
+            }
+
+            .session-domain {
+                font-weight: 500;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .session-user {
+                color: #888;
+                font-size: 11px;
+                margin-top: 1px;
+            }
+
+            .empty-msg {
+                color: #aaa;
+                font-style: italic;
+                padding: 4px 0;
+            }
+
+            /* Import / Export */
+            .actions-row {
+                display: flex;
+                gap: 8px;
+            }
+
+            .import-summary {
+                margin-top: 10px;
+                padding: 8px 10px;
+                background: #f8f9fa;
+                border: 1px solid #e2e2e2;
+                border-radius: 4px;
+                font-size: 12px;
+                white-space: pre-line;
+                line-height: 1.6;
+                display: none;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="header">Moodle Keep-Alive</div>
+
+        <!-- Access Code -->
+        <div class="section">
+            <div class="section-title">Access Code</div>
+            <div class="input-row">
+                <input type="password" id="secretInput" placeholder="Enter access code" autocomplete="off">
+                <button class="btn" id="saveSecretBtn">Save</button>
+                <span class="status-msg" id="secretStatus"></span>
+            </div>
+        </div>
+
+        <!-- Session list -->
+        <div class="section">
+            <div class="section-title">Active Sessions</div>
+            <div class="session-list" id="sessionList">
+                <div class="empty-msg">No sessions tracked yet.</div>
+            </div>
+        </div>
+
+        <!-- Import / Export -->
+        <div class="section">
+            <div class="section-title">Import / Export</div>
+            <div class="actions-row">
+                <button class="btn btn-secondary" id="exportBtn">Export</button>
+                <button class="btn btn-secondary" id="importBtn">Import</button>
+                <input type="file" id="importFile" accept=".json" style="display:none">
+            </div>
+            <div class="import-summary" id="importSummary"></div>
+        </div>
+
+        <script src="popup.js"></script>
+    </body>
+
+</html>

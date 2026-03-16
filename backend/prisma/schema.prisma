@@ -1,0 +1,28 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model MoodleSession {
+  id             String   @id @default(cuid())
+  uniqueIdentity String   @unique // e.g. "https://moodle.school.edu/user/profile.php?id=42"
+  nonUniqueId    String   // raw data-userid value from the Moodle page
+  domain         String   // e.g. "https://moodle.school.edu"
+  cookieString   String   // full document.cookie string
+  failCount      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model ExpiredNotification {
+  id             String   @id @default(cuid())
+  uniqueIdentity String
+  expiredAt      DateTime @default(now())
+}

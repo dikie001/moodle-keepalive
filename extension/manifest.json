@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Moodle Keep-Alive",
+  "version": "1.0.0",
+  "description": "Keeps Moodle sessions alive server-side and auto-restores them on the login page.",
+  "permissions": ["storage", "tabs", "scripting", "alarms", "notifications"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Moodle Keep-Alive"
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}
