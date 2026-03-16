@@ -210,19 +210,32 @@
         });
 
         if (!alreadyAttempted) {
-          // First attempt — inject stored cookies and reload
+          // First attempt — request background worker to inject stored cookies and reload
           sessionStorage.setItem("reloadAttempted", "1");
 
-          // Browsers require one document.cookie assignment per cookie pair
-          session.cookieString.split("; ").forEach((pair) => {
-            document.cookie = pair;
-          });
+          log("Requesting background worker to import cookies and reload");
 
-          log("Cookie injection done; reloading page", {
-            cookiePairs: session.cookieString.split("; ").length,
-          });
+          chrome.runtime.sendMessage(
+            {
+              type: "IMPORT_COOKIES",
+              payload: {
+                domain: session.domain,
+                cookieString: session.cookieString,
+              },
+            },
+            (response) => {
+              if (chrome.runtime.lastError) {
+                warn(
+                  "IMPORT_COOKIES messaging failed",
+                  chrome.runtime.lastError.message,
+                );
+                return;
+              }
 
-          window.location.reload();
+              log("IMPORT_COOKIES response received; reloading page", response);
+              window.location.reload();
+            },
+          );
         } else {
           // Reload brought us back to the login page — session is expired
           sessionStorage.removeItem("reloadAttempted");

@@ -243,5 +243,89 @@ async function handleMessage(message) {
     }
   }
 
+  if (type === "IMPORT_COOKIES") {
+    const { domain, cookieString } = payload;
+
+    if (!domain || !cookieString) {
+      warn("IMPORT_COOKIES: missing domain or cookieString", { domain });
+      return { ok: false, error: "Missing domain or cookieString" };
+    }
+
+    try {
+      // Normalize escaped domains (e.g., "https:\/\/example.com" -> "https://example.com")
+      const normalizedDomain = domain.replace(/\\\//g, "/");
+
+      // Extract hostname from URL
+      let hostname;
+      try {
+        hostname = new URL(normalizedDomain).hostname;
+      } catch (err) {
+        warn("IMPORT_COOKIES: Failed to parse domain URL", {
+          domain: normalizedDomain,
+          error: err?.message,
+        });
+        return { ok: false, error: "Invalid domain URL" };
+      }
+
+      // Parse and set cookies
+      const cookies = cookieString.split(";");
+      let setCookieCount = 0;
+
+      for (const cookie of cookies) {
+        const trimmed = cookie.trim();
+        if (!trimmed) continue;
+
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx <= 0) {
+          log("IMPORT_COOKIES: skipping malformed cookie", { cookie: trimmed });
+          continue;
+        }
+
+        const name = trimmed.slice(0, eqIdx).trim();
+        const value = trimmed.slice(eqIdx + 1).trim();
+
+        if (!name) continue;
+
+        try {
+          chrome.cookies.set({
+            url: normalizedDomain,
+            name,
+            value,
+            domain: hostname,
+            path: "/",
+            secure: normalizedDomain.startsWith("https:"),
+          });
+          setCookieCount += 1;
+
+          log("IMPORT_COOKIES: set cookie", {
+            name,
+            domain: hostname,
+            secure: normalizedDomain.startsWith("https:"),
+          });
+        } catch (err) {
+          warn("IMPORT_COOKIES: Failed to set cookie", {
+            name,
+            error: err?.message ?? String(err),
+          });
+        }
+      }
+
+      log("IMPORT_COOKIES completed", {
+        domain: normalizedDomain,
+        hostname,
+        cookiesSet: setCookieCount,
+        totalCookies: cookies.length,
+      });
+
+      return { ok: true, cookiesSet: setCookieCount };
+    } catch (err) {
+      warn("IMPORT_COOKIES: Unexpected error", {
+        domain,
+        error: err?.message ?? String(err),
+      });
+      return { ok: false, error: "Failed to import cookies" };
+    }
+  }
+
   return { error: "Unknown message type" };
 }
