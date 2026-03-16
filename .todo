@@ -1,1 +1,5 @@
-investigate cookie placement loginc
+investigate cookie placement logic
+show relevant logs/warnings to user
+
+
+content.js:77 Executing inline script violates the following Content Security Policy directive 'script-src 'self' 'wasm-unsafe-eval' 'inline-speculation-rules' http://localhost:* http://127.0.0.1:* chrome-extension://2f1f5040-d9d0-4ead-8670-bbbfba9ca2e7/'. Either the 'unsafe-inline' keyword, a hash ('sha256-/IOy0Wt7qCvxr85i+uDzOAQA5VHSkgUES2n4gpswGXg='), or a nonce ('nonce-...') is required to enable inline execution. The action has been blocked

@@ -227,11 +227,19 @@ async function handleImport(file) {
     try {
       const result = await sendMessage({
         type: "VALIDATE_COOKIE",
-        payload: { domain, cookieString },
+        payload: { domain, cookieString, secret },
       });
       valid = result?.valid === true;
+      log("Import validation result", {
+        domain,
+        nonUniqueId,
+        valid,
+        status: result?.status,
+        finalUrl: result?.finalUrl,
+      });
     } catch {
       // Treat network errors as invalid
+      warn("Import validation message failed", { domain, nonUniqueId });
     }
 
     if (!valid) {

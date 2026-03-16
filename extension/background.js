@@ -198,25 +198,47 @@ async function handleMessage(message) {
   }
 
   if (type === "VALIDATE_COOKIE") {
-    const { domain, cookieString } = payload;
+    const { domain, cookieString, secret } = payload;
     try {
-      log("VALIDATE_COOKIE -> domain", {
+      const backendUrl = await getBackendUrl();
+      log("VALIDATE_COOKIE -> backend", {
+        backendUrl,
         domain,
         cookieLength: cookieString?.length ?? 0,
+        hasSecret: Boolean(secret),
       });
-      const response = await fetch(`${domain}/my/`, {
-        headers: { Cookie: cookieString },
-        redirect: "follow",
+
+      const response = await fetch(`${backendUrl}/validate-cookie`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret, domain, cookieString }),
       });
-      const valid = !response.url.includes("/login") && response.status === 200;
+
+      if (!response.ok) {
+        warn("VALIDATE_COOKIE backend returned non-ok", {
+          status: response.status,
+          domain,
+        });
+        return { valid: false, status: response.status };
+      }
+
+      const data = await response.json();
       log("VALIDATE_COOKIE response", {
-        status: response.status,
-        finalUrl: response.url,
-        valid,
+        status: data.status,
+        finalUrl: data.finalUrl,
+        valid: data.valid,
       });
-      return { valid };
-    } catch {
-      warn("VALIDATE_COOKIE failed for domain", domain);
+
+      return {
+        valid: data.valid === true,
+        status: data.status,
+        finalUrl: data.finalUrl,
+      };
+    } catch (err) {
+      warn("VALIDATE_COOKIE failed for domain", {
+        domain,
+        error: err?.message ?? String(err),
+      });
       return { valid: false };
     }
   }
