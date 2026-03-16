@@ -18,8 +18,5 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Moodle Keep-Alive"
-  },
-  "icons": {
-    "128": "icon.png"
   }
 }
