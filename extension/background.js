@@ -147,8 +147,64 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     });
 
     for (const uniqueIdentity of data.expired ?? []) {
-      if (sessions[uniqueIdentity]) {
-        const domain = sessions[uniqueIdentity].domain;
+      if (!sessions[uniqueIdentity]) {
+        log("Notifications listed expired session not in local storage; skipping", {
+          uniqueIdentity,
+        });
+        continue;
+      }
+
+      const domain = sessions[uniqueIdentity].domain;
+      const cookieString = sessions[uniqueIdentity].cookieString;
+
+      // Require backend+Moodle re-validation before deleting (same as content script path)
+      // to avoid false positives from backend bugs or race conditions.
+      log("Re-validating expired session candidate from backend notification", {
+        uniqueIdentity,
+        domain,
+      });
+
+      try {
+        const validateResponse = await fetch(`${backendUrl}/validate-cookie`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ secret, domain, cookieString }),
+        });
+
+        if (!validateResponse.ok) {
+          warn(
+            "Validation recheck failed for expired candidate; skipping delete",
+            { uniqueIdentity, status: validateResponse.status },
+          );
+          continue;
+        }
+
+        const validateData = await validateResponse.json();
+        const isSuccessfulMoodleCheck =
+          validateData?.status === 200 &&
+          typeof validateData?.valid === "boolean";
+        const isStillValid = validateData?.valid === true;
+
+        if (!isSuccessfulMoodleCheck) {
+          warn(
+            "Expired candidate validation returned non-Moodle status; skipping delete",
+            { uniqueIdentity, status: validateData?.status },
+          );
+          continue;
+        }
+
+        if (isStillValid) {
+          log("Expired candidate still valid per re-check; keeping session", {
+            uniqueIdentity,
+          });
+          continue;
+        }
+
+        log(
+          "Expired candidate confirmed invalid by re-validation; deleting from local storage",
+          { uniqueIdentity },
+        );
+
         delete sessions[uniqueIdentity];
 
         const iconUrl = chrome.runtime.getURL("icon.png") || FALLBACK_ICON;
@@ -157,6 +213,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
           iconUrl,
           title: "Moodle Session Expired",
           message: `Your Moodle session at ${domain} has expired and was removed.`,
+        });
+      } catch (err) {
+        warn("Validation recheck threw exception; skipping delete to be safe", {
+          uniqueIdentity,
+          error: err?.message ?? String(err),
         });
       }
     }

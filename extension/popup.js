@@ -57,6 +57,19 @@ function showImportSummary(text) {
   el.style.display = "block";
 }
 
+function setSecretWarning(hasSecret) {
+  const el = document.getElementById("secretWarning");
+  if (hasSecret) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+
+  el.textContent =
+    "Access code is missing. Cookie validation and server sync are disabled until you save it.";
+  el.style.display = "block";
+}
+
 function clearImportLog() {
   const el = document.getElementById("importLog");
   el.textContent = "";
@@ -265,6 +278,15 @@ async function handleImport(file) {
   appendImportLog(
     `Storage ready. Existing sessions: ${Object.keys(currentSessions).length}.`,
   );
+
+  if (!secret) {
+    appendImportLog("Import blocked: access code is not set.");
+    showImportSummary(
+      "Import blocked: set Access Code first so cookies can be validated.",
+    );
+    return;
+  }
+
   setImportLoading(true, "Validating sessions...");
 
   const successList = [];
@@ -279,6 +301,8 @@ async function handleImport(file) {
 
     // Live cookie validation via background worker
     let valid = false;
+    let skipReason = null;
+    let skipDetails = null;
     try {
       const result = await sendMessage({
         type: "VALIDATE_COOKIE",
@@ -291,25 +315,72 @@ async function handleImport(file) {
         valid,
         status: result?.status,
         finalUrl: result?.finalUrl,
+        error: result?.error,
       });
       if (valid) {
-        appendImportLog(`Validation passed for ${hostname} (user ${nonUniqueId}).`);
-      } else {
         appendImportLog(
-          `Validation failed for ${hostname} (user ${nonUniqueId}).`,
+          `Validation passed for ${hostname} (user ${nonUniqueId}).`,
         );
+      } else {
+        const status = result?.status;
+        if (status === 403) {
+          skipReason = "secret_invalid";
+          skipDetails = "Access code is incorrect";
+          appendImportLog(
+            `Validation failed for ${hostname} (user ${nonUniqueId}): access code rejected.`,
+          );
+        } else if (status === 400) {
+          skipReason = "request_malformed";
+          skipDetails = "Validation request was malformed";
+          appendImportLog(
+            `Validation failed for ${hostname} (user ${nonUniqueId}): request error.`,
+          );
+        } else if (status && status >= 500) {
+          skipReason = "backend_error";
+          skipDetails = `Backend error (HTTP ${status})`;
+          appendImportLog(
+            `Validation failed for ${hostname} (user ${nonUniqueId}): backend error.`,
+          );
+        } else if (status) {
+          skipReason = "unexpected_status";
+          skipDetails = `Unexpected HTTP ${status} from backend`;
+          appendImportLog(
+            `Validation failed for ${hostname} (user ${nonUniqueId}): HTTP ${status}.`,
+          );
+        } else {
+          skipReason = "session_invalid";
+          skipDetails = "Cookie is invalid or expired";
+          appendImportLog(
+            `Validation failed for ${hostname} (user ${nonUniqueId}): invalid session.`,
+          );
+        }
       }
-    } catch {
-      // Treat network errors as invalid
-      warn("Import validation message failed", { domain, nonUniqueId });
+    } catch (err) {
+      // Network-level error
+      skipReason = "network_error";
+      skipDetails = "Network or messaging failure";
+      warn("Import validation message failed", {
+        domain,
+        nonUniqueId,
+        error: err?.message,
+      });
       appendImportLog(
-        `Validation request failed for ${hostname} (user ${nonUniqueId}).`,
+        `Validation request failed for ${hostname} (user ${nonUniqueId}): network error.`,
       );
     }
 
     if (!valid) {
-      warn("Import skipped invalid session", { domain, nonUniqueId });
-      expiredList.push({ hostname, nonUniqueId });
+      warn("Import skipped invalid session", {
+        domain,
+        nonUniqueId,
+        reason: skipReason,
+      });
+      expiredList.push({
+        hostname,
+        nonUniqueId,
+        reason: skipReason,
+        details: skipDetails,
+      });
       continue;
     }
 
@@ -318,42 +389,34 @@ async function handleImport(file) {
     appendImportLog(`Saved locally: ${hostname} (user ${nonUniqueId}).`);
 
     // Sync to backend if access code is configured
-    if (secret) {
-      let synced = false;
-      setImportLoading(true, "Syncing validated sessions...");
-      try {
-        const syncResult = await sendMessage({
-          type: "POST_SESSION",
-          payload: {
-            secret,
-            uniqueIdentity,
-            nonUniqueId,
-            domain,
-            cookieString,
-          },
-        });
-        synced = syncResult?.ok === true;
-      } catch {
-        // Treat as sync failure
-      }
+    let synced = false;
+    setImportLoading(true, "Syncing validated sessions...");
+    try {
+      const syncResult = await sendMessage({
+        type: "POST_SESSION",
+        payload: {
+          secret,
+          uniqueIdentity,
+          nonUniqueId,
+          domain,
+          cookieString,
+        },
+      });
+      synced = syncResult?.ok === true;
+    } catch {
+      // Treat as sync failure
+    }
 
-      if (synced) {
-        log("Import sync success", { domain, nonUniqueId });
-        appendImportLog(`Synced to server: ${hostname} (user ${nonUniqueId}).`);
-        successList.push({ hostname, nonUniqueId });
-      } else {
-        warn("Import sync failed", { domain, nonUniqueId });
-        appendImportLog(
-          `Server sync failed: ${hostname} (user ${nonUniqueId}) (saved locally).`,
-        );
-        serverFailList.push({ hostname, nonUniqueId });
-      }
-    } else {
-      // No access code — save locally only
-      appendImportLog(
-        `No access code configured; kept local only: ${hostname} (user ${nonUniqueId}).`,
-      );
+    if (synced) {
+      log("Import sync success", { domain, nonUniqueId });
+      appendImportLog(`Synced to server: ${hostname} (user ${nonUniqueId}).`);
       successList.push({ hostname, nonUniqueId });
+    } else {
+      warn("Import sync failed", { domain, nonUniqueId });
+      appendImportLog(
+        `Server sync failed: ${hostname} (user ${nonUniqueId}) (saved locally).`,
+      );
+      serverFailList.push({ hostname, nonUniqueId });
     }
   }
 
@@ -375,20 +438,15 @@ async function handleImport(file) {
   }
 
   for (const s of expiredList) {
+    const details = s.details || "Unknown reason";
     lines.push(
-      `⚠️ Skipped (expired or invalid): ${s.hostname} (user ${s.nonUniqueId})`,
+      `⚠️ Skipped: ${s.hostname} (user ${s.nonUniqueId}) — ${details}`,
     );
   }
 
   for (const s of serverFailList) {
     lines.push(
       `⚠️ Saved locally, sync failed: ${s.hostname} (user ${s.nonUniqueId})`,
-    );
-  }
-
-  if (!secret && currentSessions && Object.keys(currentSessions).length > 0) {
-    lines.push(
-      "ℹ️ No access code set — sessions saved locally only, not synced to server.",
     );
   }
 
@@ -419,6 +477,7 @@ async function init() {
   if (secret) {
     document.getElementById("secretInput").value = secret;
   }
+  setSecretWarning(Boolean(secret));
 
   renderSessions(sessions);
 
@@ -429,6 +488,7 @@ async function init() {
       await setStorage({ secret: value });
       log("Secret saved", { hasSecret: Boolean(value), length: value.length });
       showSecretStatus(value ? "Saved!" : "Cleared.");
+      setSecretWarning(Boolean(value));
     });
 
   document.getElementById("exportBtn").addEventListener("click", handleExport);
