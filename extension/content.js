@@ -113,16 +113,52 @@
       domain,
     });
 
-    // Step B — Extract the logged-in user id from the page HTML.
-    const nonUniqueId =
-      document.documentElement.outerHTML.match(/data-userid="(\d+)"/)?.[1] ??
-      null;
-    log("User ID detection result", { nonUniqueId });
+    function isMoodleLoggedIn() {
+      const baseUrl =
+        domain ||
+        (typeof M !== "undefined" && M.cfg?.wwwroot
+          ? M.cfg.wwwroot
+          : "https://ielearning.ueab.ac.ke");
 
-    if (nonUniqueId) {
+      // Method 1: Body class check
+      if (document.body?.classList.contains("loggedin")) return true;
+      if (document.body?.classList.contains("notloggedin")) return false;
+
+      // Method 2: Logout link contains wwwroot
+      const logoutLink = document.querySelector(
+        `a[href*="${baseUrl}/login/logout.php"]`,
+      );
+      if (logoutLink) return true;
+
+      // Method 3: Login link present = not logged in
+      const loginLink = document.querySelector(
+        `a[href*="${baseUrl}/login/index.php"]`,
+      );
+      if (loginLink) return false;
+
+      // Method 4: sesskey input (only exists when logged in)
+      if (document.querySelector('input[name="sesskey"]')) return true;
+
+      return false;
+    }
+
+    const loggedIn = isMoodleLoggedIn();
+    log("Login state detection", { loggedIn, href: window.location.href });
+
+    if (loggedIn) {
       // -----------------------------------------------------------------------
       // Step C — User is logged in: register / refresh the session on the backend
       // -----------------------------------------------------------------------
+      const nonUniqueId =
+        document.documentElement.outerHTML.match(/data-userid="(\d+)"/)?.[1] ??
+        null;
+      log("User ID detection result", { nonUniqueId });
+
+      if (!nonUniqueId) {
+        warn("Logged-in state detected but user ID was not found; skipping");
+        return;
+      }
+
       const uniqueIdentity = `${domain}/user/profile.php?id=${nonUniqueId}`;
       const cookieString = document.cookie;
       log("Attempting session register", {
@@ -181,15 +217,10 @@
       });
     } else {
       // -----------------------------------------------------------------------
-      // Step D — User is NOT logged in: check for the login page and attempt to
-      //           restore a previously saved session via cookie injection.
+      // Step D — User is NOT logged in: attempt to restore a previously saved
+      //           session via cookie injection.
       // -----------------------------------------------------------------------
-      const isLoginPage =
-        window.location.href.includes("/login/index.php") ||
-        window.location.pathname === "/login/";
-      log("Logged-out branch", { isLoginPage, href: window.location.href });
-
-      if (!isLoginPage) return;
+      log("Logged-out branch", { href: window.location.href });
 
       chrome.storage.local.get(["sessions"], ({ sessions = {} }) => {
         // Find a stored session for the current Moodle domain

@@ -57,6 +57,38 @@ function showImportSummary(text) {
   el.style.display = "block";
 }
 
+function clearImportLog() {
+  const el = document.getElementById("importLog");
+  el.textContent = "";
+  el.style.display = "none";
+}
+
+function appendImportLog(line) {
+  const el = document.getElementById("importLog");
+  const timestamp = new Date().toLocaleTimeString();
+  const nextLine = `[${timestamp}] ${line}`;
+  el.textContent = el.textContent
+    ? `${el.textContent}\n${nextLine}`
+    : nextLine;
+  el.style.display = "block";
+  el.scrollTop = el.scrollHeight;
+}
+
+function setImportLoading(isLoading, text = "") {
+  const loadingRow = document.getElementById("importLoadingRow");
+  const loadingText = document.getElementById("importLoadingText");
+  const saveSecretBtn = document.getElementById("saveSecretBtn");
+  const exportBtn = document.getElementById("exportBtn");
+  const importBtn = document.getElementById("importBtn");
+
+  loadingRow.style.display = isLoading ? "flex" : "none";
+  loadingText.textContent = text || "Importing sessions...";
+
+  saveSecretBtn.disabled = isLoading;
+  exportBtn.disabled = isLoading;
+  importBtn.disabled = isLoading;
+}
+
 // ---------------------------------------------------------------------------
 // Render session list
 // ---------------------------------------------------------------------------
@@ -157,16 +189,22 @@ async function handleExport() {
 // Import
 // ---------------------------------------------------------------------------
 async function handleImport(file) {
-  log("Import started", { filename: file?.name, size: file?.size });
-  const summaryEl = document.getElementById("importSummary");
-  summaryEl.style.display = "none";
-  summaryEl.textContent = "";
+  try {
+    log("Import started", { filename: file?.name, size: file?.size });
+    const summaryEl = document.getElementById("importSummary");
+    summaryEl.style.display = "none";
+    summaryEl.textContent = "";
+    clearImportLog();
+    setImportLoading(true, "Reading import file...");
+    appendImportLog(`Starting import from ${file?.name || "selected file"}.`);
 
   // --- Parse ---
   let text;
   try {
     text = await file.text();
   } catch {
+    setImportLoading(false);
+    appendImportLog("Failed to read file.");
     showImportSummary("Failed to read file.");
     return;
   }
@@ -175,29 +213,41 @@ async function handleImport(file) {
   try {
     entries = JSON.parse(text);
   } catch {
+    setImportLoading(false);
+    appendImportLog("Import aborted: invalid JSON.");
     showImportSummary("Invalid file format. Import aborted.");
     return;
   }
 
   if (!Array.isArray(entries)) {
+    setImportLoading(false);
+    appendImportLog("Import aborted: top-level JSON is not an array.");
     showImportSummary("Invalid file format. Import aborted.");
     return;
   }
 
   if (entries.length === 0) {
+    setImportLoading(false);
+    appendImportLog("No sessions found in selected file.");
     showImportSummary("No sessions found in file.");
     return;
   }
+
+  appendImportLog(`Parsed file successfully (${entries.length} entries).`);
 
   // Validate all entries have required fields before processing any
   const required = ["domain", "uniqueIdentity", "cookieString", "nonUniqueId"];
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") {
+      setImportLoading(false);
+      appendImportLog("Import aborted: encountered non-object entry.");
       showImportSummary("Invalid file format. Import aborted.");
       return;
     }
     for (const field of required) {
       if (!entry[field]) {
+        setImportLoading(false);
+        appendImportLog(`Import aborted: missing required field (${field}).`);
         showImportSummary("Invalid file format. Import aborted.");
         return;
       }
@@ -212,6 +262,10 @@ async function handleImport(file) {
     hasSecret: Boolean(secret),
     existingSessions: Object.keys(currentSessions).length,
   });
+  appendImportLog(
+    `Storage ready. Existing sessions: ${Object.keys(currentSessions).length}.`,
+  );
+  setImportLoading(true, "Validating sessions...");
 
   const successList = [];
   const expiredList = [];
@@ -221,6 +275,7 @@ async function handleImport(file) {
   for (const entry of entries) {
     const { domain, uniqueIdentity, cookieString, nonUniqueId } = entry;
     const hostname = getHostname(domain);
+    appendImportLog(`Validating ${hostname} (user ${nonUniqueId})...`);
 
     // Live cookie validation via background worker
     let valid = false;
@@ -237,9 +292,19 @@ async function handleImport(file) {
         status: result?.status,
         finalUrl: result?.finalUrl,
       });
+      if (valid) {
+        appendImportLog(`Validation passed for ${hostname} (user ${nonUniqueId}).`);
+      } else {
+        appendImportLog(
+          `Validation failed for ${hostname} (user ${nonUniqueId}).`,
+        );
+      }
     } catch {
       // Treat network errors as invalid
       warn("Import validation message failed", { domain, nonUniqueId });
+      appendImportLog(
+        `Validation request failed for ${hostname} (user ${nonUniqueId}).`,
+      );
     }
 
     if (!valid) {
@@ -250,10 +315,12 @@ async function handleImport(file) {
 
     // Upsert session locally (create or replace cookieString)
     currentSessions[uniqueIdentity] = { cookieString, domain, nonUniqueId };
+    appendImportLog(`Saved locally: ${hostname} (user ${nonUniqueId}).`);
 
     // Sync to backend if access code is configured
     if (secret) {
       let synced = false;
+      setImportLoading(true, "Syncing validated sessions...");
       try {
         const syncResult = await sendMessage({
           type: "POST_SESSION",
@@ -272,13 +339,20 @@ async function handleImport(file) {
 
       if (synced) {
         log("Import sync success", { domain, nonUniqueId });
+        appendImportLog(`Synced to server: ${hostname} (user ${nonUniqueId}).`);
         successList.push({ hostname, nonUniqueId });
       } else {
         warn("Import sync failed", { domain, nonUniqueId });
+        appendImportLog(
+          `Server sync failed: ${hostname} (user ${nonUniqueId}) (saved locally).`,
+        );
         serverFailList.push({ hostname, nonUniqueId });
       }
     } else {
       // No access code — save locally only
+      appendImportLog(
+        `No access code configured; kept local only: ${hostname} (user ${nonUniqueId}).`,
+      );
       successList.push({ hostname, nonUniqueId });
     }
   }
@@ -290,6 +364,7 @@ async function handleImport(file) {
     syncFailed: serverFailList.length,
   });
   renderSessions(currentSessions);
+  setImportLoading(false);
 
   // --- Build summary ---
   const lines = ["Import complete."];
@@ -317,7 +392,18 @@ async function handleImport(file) {
     );
   }
 
-  showImportSummary(lines.join("\n"));
+  appendImportLog(
+    `Import finished. Success: ${successList.length}, skipped: ${expiredList.length}, sync failed: ${serverFailList.length}.`,
+  );
+
+    showImportSummary(lines.join("\n"));
+  } catch (err) {
+    warn("Import failed unexpectedly", err?.message ?? String(err));
+    appendImportLog("Import failed unexpectedly.");
+    showImportSummary("Import failed unexpectedly. Please try again.");
+  } finally {
+    setImportLoading(false);
+  }
 }
 
 // ---------------------------------------------------------------------------

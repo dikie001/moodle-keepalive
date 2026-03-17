@@ -9,6 +9,42 @@ const LOG_PREFIX = "[Moodle Keep-Alive][background]";
 const log = (...args) => console.log(LOG_PREFIX, ...args);
 const warn = (...args) => console.warn(LOG_PREFIX, ...args);
 
+function getAllCookies(filter) {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.getAll(filter, (cookies) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(cookies ?? []);
+      }
+    });
+  });
+}
+
+function removeCookie(details) {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.remove(details, (removed) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(removed);
+      }
+    });
+  });
+}
+
+function setCookie(details) {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.set(details, (cookie) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(cookie);
+      }
+    });
+  });
+}
+
 let cachedBackendUrl = DEFAULT_BACKEND_URL;
 let backendUrlLastFetchedAt = 0;
 
@@ -267,9 +303,9 @@ async function handleMessage(message) {
         return { ok: false, error: "Invalid domain URL" };
       }
 
-      // Parse and set cookies
+      // Parse cookies from header format and keep the last value for duplicate names.
       const cookies = cookieString.split(";");
-      let setCookieCount = 0;
+      const latestByName = new Map();
 
       for (const cookie of cookies) {
         const trimmed = cookie.trim();
@@ -286,8 +322,57 @@ async function handleMessage(message) {
 
         if (!name) continue;
 
+        latestByName.set(name, value);
+      }
+
+      let removedCookieCount = 0;
+      let removedAttemptCount = 0;
+
+      for (const [name] of latestByName) {
+        let existingCookies = [];
         try {
-          chrome.cookies.set({
+          existingCookies = await getAllCookies({ domain: hostname, name });
+        } catch (err) {
+          warn("IMPORT_COOKIES: Failed to query existing cookies", {
+            name,
+            error: err?.message ?? String(err),
+          });
+          continue;
+        }
+
+        for (const existing of existingCookies) {
+          removedAttemptCount += 1;
+          const cookieHost = (existing.domain ?? "").replace(/^\./, "");
+          const cookiePath = existing.path || "/";
+          const scheme = existing.secure ? "https" : "http";
+          const url = `${scheme}://${cookieHost}${cookiePath}`;
+
+          try {
+            const removed = await removeCookie({
+              url,
+              name: existing.name,
+              storeId: existing.storeId,
+            });
+            if (removed) {
+              removedCookieCount += 1;
+            }
+          } catch (err) {
+            warn("IMPORT_COOKIES: Failed to remove existing cookie", {
+              name,
+              domain: existing.domain,
+              path: existing.path,
+              error: err?.message ?? String(err),
+            });
+          }
+        }
+      }
+
+      let setCookieCount = 0;
+
+      for (const [name, value] of latestByName) {
+
+        try {
+          await setCookie({
             url: normalizedDomain,
             name,
             value,
@@ -313,11 +398,19 @@ async function handleMessage(message) {
       log("IMPORT_COOKIES completed", {
         domain: normalizedDomain,
         hostname,
+        uniqueCookieNames: latestByName.size,
         cookiesSet: setCookieCount,
+        cookiesRemoved: removedCookieCount,
+        cookiesRemoveAttempts: removedAttemptCount,
         totalCookies: cookies.length,
       });
 
-      return { ok: true, cookiesSet: setCookieCount };
+      return {
+        ok: true,
+        uniqueCookieNames: latestByName.size,
+        cookiesSet: setCookieCount,
+        cookiesRemoved: removedCookieCount,
+      };
     } catch (err) {
       warn("IMPORT_COOKIES: Unexpected error", {
         domain,
