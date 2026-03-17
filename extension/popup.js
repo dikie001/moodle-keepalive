@@ -481,14 +481,57 @@ async function init() {
 
   renderSessions(sessions);
 
+  // Toggle secret visibility
+  document
+    .getElementById("toggleSecretVisibility")
+    .addEventListener("click", () => {
+      const input = document.getElementById("secretInput");
+      const isPassword = input.type === "password";
+      input.type = isPassword ? "text" : "password";
+    });
+
   document
     .getElementById("saveSecretBtn")
     .addEventListener("click", async () => {
       const value = document.getElementById("secretInput").value.trim();
-      await setStorage({ secret: value });
-      log("Secret saved", { hasSecret: Boolean(value), length: value.length });
-      showSecretStatus(value ? "Saved!" : "Cleared.");
-      setSecretWarning(Boolean(value));
+
+      if (!value) {
+        // Clearing the secret
+        await setStorage({ secret: "" });
+        log("Secret cleared");
+        showSecretStatus("Cleared.");
+        setSecretWarning(false);
+        return;
+      }
+
+      // Validate the secret with the backend
+      try {
+        showSecretStatus("Validating...");
+        const validationResponse = await sendMessage({
+          type: "VALIDATE_SECRET_CODE",
+          payload: { secret: value },
+        });
+
+        if (!validationResponse?.valid) {
+          log("Secret validation failed", {
+            status: validationResponse?.status,
+          });
+          showSecretStatus("Invalid access code.", true);
+          return;
+        }
+
+        // Secret is valid, save it
+        await setStorage({ secret: value });
+        log("Secret saved and validated", { length: value.length });
+        showSecretStatus("Access code verified and saved!");
+        setSecretWarning(false);
+      } catch (err) {
+        warn("Secret validation error", err?.message);
+        showSecretStatus(
+          "Could not validate access code (network error).",
+          true,
+        );
+      }
     });
 
   document.getElementById("exportBtn").addEventListener("click", handleExport);

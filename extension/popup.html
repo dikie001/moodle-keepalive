@@ -226,6 +226,29 @@
                 white-space: pre-line;
                 display: none;
             }
+
+            .input-row {
+                position: relative;
+            }
+
+            #toggleSecretVisibility {
+                position: absolute;
+                right: 60px;
+                top: 50%;
+                transform: translateY(-50%);
+                background: none;
+                border: none;
+                cursor: pointer;
+                padding: 4px 6px;
+                color: #666;
+                font-size: 14px;
+                line-height: 1;
+                user-select: none;
+            }
+
+            #toggleSecretVisibility:hover {
+                color: #0055a4;
+            }
         </style>
     </head>
 
@@ -237,6 +260,7 @@
             <div class="section-title">Access Code</div>
             <div class="input-row">
                 <input type="password" id="secretInput" placeholder="Enter access code" autocomplete="off">
+                <button type="button" id="toggleSecretVisibility" title="Show/hide access code" aria-label="Toggle secret visibility">👁</button>
                 <button class="btn" id="saveSecretBtn">Save</button>
                 <span class="status-msg" id="secretStatus"></span>
             </div>

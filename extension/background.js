@@ -481,5 +481,34 @@ async function handleMessage(message) {
     }
   }
 
+  if (type === "VALIDATE_SECRET_CODE") {
+    const { secret } = payload ?? {};
+
+    if (!secret) {
+      return { valid: false, error: "Secret is required" };
+    }
+
+    try {
+      const backendUrl = await getBackendUrl();
+      log("VALIDATE_SECRET_CODE -> backend via /ping", { backendUrl });
+
+      // Call /ping with the secret to validate it
+      // Returns 403 if invalid, 200 if valid
+      const response = await fetch(
+        `${backendUrl}/ping?secret=${encodeURIComponent(secret)}`,
+      );
+
+      const isValid = response.status === 200;
+      log("VALIDATE_SECRET_CODE result", { isValid, status: response.status });
+
+      return { valid: isValid, status: response.status };
+    } catch (err) {
+      warn("VALIDATE_SECRET_CODE failed", {
+        error: err?.message ?? String(err),
+      });
+      return { valid: false, error: "Validation failed" };
+    }
+  }
+
   return { error: "Unknown message type" };
 }
