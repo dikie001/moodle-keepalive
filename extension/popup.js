@@ -41,11 +41,15 @@ function getHostname(url) {
   }
 }
 
-function showSecretStatus(msg, isError = false) {
+function showSecretStatus(msg, isError = false, isLoading = false) {
   const el = document.getElementById("secretStatus");
   el.textContent = msg;
-  el.className = "status-msg" + (isError ? " error" : "");
+  el.className =
+    "status-msg" + (isError ? " error" : "") + (isLoading ? " loading" : "");
   clearTimeout(el._timer);
+  if (isLoading) {
+    return;
+  }
   el._timer = setTimeout(() => {
     el.textContent = "";
   }, 2500);
@@ -100,6 +104,17 @@ function setImportLoading(isLoading, text = "") {
   saveSecretBtn.disabled = isLoading;
   exportBtn.disabled = isLoading;
   importBtn.disabled = isLoading;
+}
+
+function syncSecretVisibilityButton(input, button) {
+  const isVisible = input.type === "text";
+  button.textContent = isVisible ? "🙈" : "👁";
+  button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+  button.title = isVisible ? "Hide access code" : "Show access code";
+  button.setAttribute(
+    "aria-label",
+    isVisible ? "Hide access code" : "Show access code",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -482,13 +497,17 @@ async function init() {
   renderSessions(sessions);
 
   // Toggle secret visibility
-  document
-    .getElementById("toggleSecretVisibility")
-    .addEventListener("click", () => {
-      const input = document.getElementById("secretInput");
-      const isPassword = input.type === "password";
-      input.type = isPassword ? "text" : "password";
-    });
+  const secretInput = document.getElementById("secretInput");
+  const toggleSecretVisibilityBtn = document.getElementById(
+    "toggleSecretVisibility",
+  );
+  syncSecretVisibilityButton(secretInput, toggleSecretVisibilityBtn);
+
+  toggleSecretVisibilityBtn.addEventListener("click", () => {
+    const isPassword = secretInput.type === "password";
+    secretInput.type = isPassword ? "text" : "password";
+    syncSecretVisibilityButton(secretInput, toggleSecretVisibilityBtn);
+  });
 
   document
     .getElementById("saveSecretBtn")
@@ -506,7 +525,7 @@ async function init() {
 
       // Validate the secret with the backend
       try {
-        showSecretStatus("Validating...");
+        showSecretStatus("Validating...", false, true);
         const validationResponse = await sendMessage({
           type: "VALIDATE_SECRET_CODE",
           payload: { secret: value },
@@ -524,7 +543,7 @@ async function init() {
         await setStorage({ secret: value });
         log("Secret saved and validated", { length: value.length });
         showSecretStatus("Access code verified and saved!");
-        setSecretWarning(false);
+        setSecretWarning(true);
       } catch (err) {
         warn("Secret validation error", err?.message);
         showSecretStatus(
