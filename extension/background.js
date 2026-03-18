@@ -9,6 +9,42 @@ const LOG_PREFIX = "[Moodle Keep-Alive][background]";
 const log = (...args) => console.log(LOG_PREFIX, ...args);
 const warn = (...args) => console.warn(LOG_PREFIX, ...args);
 
+function getAllCookies(filter) {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.getAll(filter, (cookies) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(cookies ?? []);
+      }
+    });
+  });
+}
+
+function removeCookie(details) {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.remove(details, (removed) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(removed);
+      }
+    });
+  });
+}
+
+function setCookie(details) {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.set(details, (cookie) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(cookie);
+      }
+    });
+  });
+}
+
 let cachedBackendUrl = DEFAULT_BACKEND_URL;
 let backendUrlLastFetchedAt = 0;
 
@@ -111,8 +147,64 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     });
 
     for (const uniqueIdentity of data.expired ?? []) {
-      if (sessions[uniqueIdentity]) {
-        const domain = sessions[uniqueIdentity].domain;
+      if (!sessions[uniqueIdentity]) {
+        log("Notifications listed expired session not in local storage; skipping", {
+          uniqueIdentity,
+        });
+        continue;
+      }
+
+      const domain = sessions[uniqueIdentity].domain;
+      const cookieString = sessions[uniqueIdentity].cookieString;
+
+      // Require backend+Moodle re-validation before deleting (same as content script path)
+      // to avoid false positives from backend bugs or race conditions.
+      log("Re-validating expired session candidate from backend notification", {
+        uniqueIdentity,
+        domain,
+      });
+
+      try {
+        const validateResponse = await fetch(`${backendUrl}/validate-cookie`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ secret, domain, cookieString }),
+        });
+
+        if (!validateResponse.ok) {
+          warn(
+            "Validation recheck failed for expired candidate; skipping delete",
+            { uniqueIdentity, status: validateResponse.status },
+          );
+          continue;
+        }
+
+        const validateData = await validateResponse.json();
+        const isSuccessfulMoodleCheck =
+          validateData?.status === 200 &&
+          typeof validateData?.valid === "boolean";
+        const isStillValid = validateData?.valid === true;
+
+        if (!isSuccessfulMoodleCheck) {
+          warn(
+            "Expired candidate validation returned non-Moodle status; skipping delete",
+            { uniqueIdentity, status: validateData?.status },
+          );
+          continue;
+        }
+
+        if (isStillValid) {
+          log("Expired candidate still valid per re-check; keeping session", {
+            uniqueIdentity,
+          });
+          continue;
+        }
+
+        log(
+          "Expired candidate confirmed invalid by re-validation; deleting from local storage",
+          { uniqueIdentity },
+        );
+
         delete sessions[uniqueIdentity];
 
         const iconUrl = chrome.runtime.getURL("icon.png") || FALLBACK_ICON;
@@ -121,6 +213,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
           iconUrl,
           title: "Moodle Session Expired",
           message: `Your Moodle session at ${domain} has expired and was removed.`,
+        });
+      } catch (err) {
+        warn("Validation recheck threw exception; skipping delete to be safe", {
+          uniqueIdentity,
+          error: err?.message ?? String(err),
         });
       }
     }
@@ -267,9 +364,9 @@ async function handleMessage(message) {
         return { ok: false, error: "Invalid domain URL" };
       }
 
-      // Parse and set cookies
+      // Parse cookies from header format and keep the last value for duplicate names.
       const cookies = cookieString.split(";");
-      let setCookieCount = 0;
+      const latestByName = new Map();
 
       for (const cookie of cookies) {
         const trimmed = cookie.trim();
@@ -286,8 +383,57 @@ async function handleMessage(message) {
 
         if (!name) continue;
 
+        latestByName.set(name, value);
+      }
+
+      let removedCookieCount = 0;
+      let removedAttemptCount = 0;
+
+      for (const [name] of latestByName) {
+        let existingCookies = [];
         try {
-          chrome.cookies.set({
+          existingCookies = await getAllCookies({ domain: hostname, name });
+        } catch (err) {
+          warn("IMPORT_COOKIES: Failed to query existing cookies", {
+            name,
+            error: err?.message ?? String(err),
+          });
+          continue;
+        }
+
+        for (const existing of existingCookies) {
+          removedAttemptCount += 1;
+          const cookieHost = (existing.domain ?? "").replace(/^\./, "");
+          const cookiePath = existing.path || "/";
+          const scheme = existing.secure ? "https" : "http";
+          const url = `${scheme}://${cookieHost}${cookiePath}`;
+
+          try {
+            const removed = await removeCookie({
+              url,
+              name: existing.name,
+              storeId: existing.storeId,
+            });
+            if (removed) {
+              removedCookieCount += 1;
+            }
+          } catch (err) {
+            warn("IMPORT_COOKIES: Failed to remove existing cookie", {
+              name,
+              domain: existing.domain,
+              path: existing.path,
+              error: err?.message ?? String(err),
+            });
+          }
+        }
+      }
+
+      let setCookieCount = 0;
+
+      for (const [name, value] of latestByName) {
+
+        try {
+          await setCookie({
             url: normalizedDomain,
             name,
             value,
@@ -313,17 +459,54 @@ async function handleMessage(message) {
       log("IMPORT_COOKIES completed", {
         domain: normalizedDomain,
         hostname,
+        uniqueCookieNames: latestByName.size,
         cookiesSet: setCookieCount,
+        cookiesRemoved: removedCookieCount,
+        cookiesRemoveAttempts: removedAttemptCount,
         totalCookies: cookies.length,
       });
 
-      return { ok: true, cookiesSet: setCookieCount };
+      return {
+        ok: true,
+        uniqueCookieNames: latestByName.size,
+        cookiesSet: setCookieCount,
+        cookiesRemoved: removedCookieCount,
+      };
     } catch (err) {
       warn("IMPORT_COOKIES: Unexpected error", {
         domain,
         error: err?.message ?? String(err),
       });
       return { ok: false, error: "Failed to import cookies" };
+    }
+  }
+
+  if (type === "VALIDATE_SECRET_CODE") {
+    const { secret } = payload ?? {};
+
+    if (!secret) {
+      return { valid: false, error: "Secret is required" };
+    }
+
+    try {
+      const backendUrl = await getBackendUrl();
+      log("VALIDATE_SECRET_CODE -> backend via /ping", { backendUrl });
+
+      // Call /ping with the secret to validate it
+      // Returns 403 if invalid, 200 if valid
+      const response = await fetch(
+        `${backendUrl}/ping?secret=${encodeURIComponent(secret)}`,
+      );
+
+      const isValid = response.status === 200;
+      log("VALIDATE_SECRET_CODE result", { isValid, status: response.status });
+
+      return { valid: isValid, status: response.status };
+    } catch (err) {
+      warn("VALIDATE_SECRET_CODE failed", {
+        error: err?.message ?? String(err),
+      });
+      return { valid: false, error: "Validation failed" };
     }
   }
 
